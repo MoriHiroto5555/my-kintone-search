@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const BASE  = (process.env.KINTONE_BASE_URL || '').trim      // 例: https://xxx.cybozu.com
+const BASE  = (process.env.KINTONE_BASE_URL || '').trim();      // 例: https://xxx.cybozu.com
 const APP_ID = (process.env.KINTONE_APP_ID || '').trim();       // 数値 or 文字列
 const TOKEN  = (process.env.KINTONE_API_TOKEN || '').trim();   // APIトークン
 const GUEST  = process.env.KINTONE_GUEST_SPACE_ID;
