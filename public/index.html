@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>kintone Search</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <form id="searchForm">
+    <input id="keyword" type="search" placeholder="商品コード / 商品名 / 上代 で検索" />
+    <button type="submit">検索</button>
+  </form>
+
+  <!-- カード一覧 -->
+  <div id="cards" class="cards" aria-live="polite" aria-busy="false"></div>
+
+  <!-- 詳細モーダル -->
+  <dialog id="detailDialog">
+    <div class="dialog-header">
+      <strong>詳細</strong>
+      <button id="detailClose" type="button">閉じる</button>
+    </div>
+    <div class="dialog-body">
+      <table>
+        <tbody id="detailBody"></tbody>
+      </table>
+    </div>
+  </dialog>
+
+  <script src="./app.js"></script>
+</body>
+</html>
