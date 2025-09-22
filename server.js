@@ -9,52 +9,96 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-const BASE  = (process.env.KINTONE_BASE_URL || '').trim();      // 例: https://xxx.cybozu.com
-const APP_ID = (process.env.KINTONE_APP_ID || '').trim();       // 数値 or 文字列
-const TOKEN  = (process.env.KINTONE_API_TOKEN || '').trim();   // APIトークン
-const GUEST  = process.env.KINTONE_GUEST_SPACE_ID;
+// ==== 環境変数 ====
+const BASE   = (process.env.KINTONE_BASE_URL || '').trim();   // 例: https://xxx.cybozu.com
+const APP_ID = (process.env.KINTONE_APP_ID   || '').trim();   // 数値 or 文字列
+const TOKEN  = (process.env.KINTONE_API_TOKEN|| '').trim();   // APIトークン
+const GUEST  = (process.env.KINTONE_GUEST_SPACE_ID || '').trim(); // 任意
 
-console.log('[ENV CHECK]', {
-  BASE: !!BASE,
-  APP_ID: !!APP_ID,
-　TOKEN: !!TOKEN,
-});  
-
+console.log('[ENV CHECK]', { BASE: !!BASE, APP_ID: !!APP_ID, TOKEN: !!TOKEN });
 if (!BASE || !APP_ID || !TOKEN) {
   console.error('[ENV ERROR] KINTONE_BASE_URL, KINTONE_APP_ID, KINTONE_API_TOKEN は必須');
   process.exit(1);
 }
 
-// フィールドコード（.env で上書き可：FIELD_CODE_CODE / FIELD_CODE_NAME / FIELD_CODE_PRICE）
+// 検索カードで使うフィールドコード（.envで上書き可）
 const FIELDS = {
-  CODE: process.env.FIELD_CODE_CODE  || '商品コード',
-  NAME: process.env.FIELD_CODE_NAME  || '商品名',
+  CODE:  process.env.FIELD_CODE_CODE  || '商品コード',
+  NAME:  process.env.FIELD_CODE_NAME  || '商品名',
   PRICE: process.env.FIELD_CODE_PRICE || '上代',
 };
 
+// kintone REST endpoint
 function getRecordsEndpoint() {
   return GUEST
     ? `${BASE}/k/guest/${GUEST}/v1/records.json`
     : `${BASE}/k/v1/records.json`;
 }
 
-// 検索API：商品コード/商品名/上代（3列＋$idを返す）
+// 動作確認用
+app.get('/api/ping', (req, res) => res.json({ ok: true }));
+
+// ===== /api/search（復活）=====
+// 商品コード/商品名/上代 に加えて、カードに出す 7 項目を返す
+app.get('/api/search', async (req, res) => {
+  try {
+    const { keyword = '', limit = 50, offset = 0, order = '更新日時 desc' } = req.query;
+
+    const maybeNumber = Number(keyword);
+    const priceCond = Number.isFinite(maybeNumber) ? `${FIELDS.PRICE} = ${maybeNumber}` : '';
+
+    const q = keyword
+      ? [
+          `${FIELDS.CODE} like "${keyword}"`,
+          `${FIELDS.NAME} like "${keyword}"`,
+          priceCond
+        ].filter(Boolean).join(' or ')
+      : '';
+
+    const params = {
+      app: APP_ID,
+      query: [q, `order by ${order}`, `limit ${Number(limit)}`, `offset ${Number(offset)}`]
+        .filter(Boolean)
+        .join(' '),
+      // カードで使う7項目＋ID系
+      fields: [
+        '$id', 'レコード番号',
+        FIELDS.CODE, FIELDS.NAME, FIELDS.PRICE,
+        '記号', '内箱入数', 'ロケーション', '差引実'
+      ],
+    };
+
+    const resp = await axios.get(getRecordsEndpoint(), {
+      headers: { 'X-Cybozu-API-Token': TOKEN },
+      params,
+    });
+
+    res.json({
+      ok: true,
+      totalCount: resp.data.totalCount ?? undefined,
+      records: resp.data.records || [],
+      nextOffset: Number(offset) + Number(limit),
+    });
+  } catch (err) {
+    res.status(err.response?.status || 500).json({ ok: false, error: err.response?.data || err.message });
+  }
+});
+
+// ===== /api/record（重複を解消・fields対応）=====
 app.get('/api/record', async (req, res) => {
-  const { id, fields } = req.query;
+  const { id } = req.query;
   if (!id) return res.status(400).json({ ok:false, error:'id is required' });
 
   try {
     const params = { app: APP_ID, query: `$id = ${Number(id)} limit 1` };
 
-    // クエリに fields=A,B,C が来たら kintone にもそのまま転送
-    if (fields) {
-      params.fields = String(fields)
-        .split(',')
-        .map(decodeURIComponent)
-        .map(s => s.trim())
-        .filter(Boolean);
+    // fields は "A,B" でも fields=A&fields=B... でもOKに
+    let fields = req.query.fields;
+    if (Array.isArray(fields)) {
+      params.fields = fields.map(s => String(s).trim()).filter(Boolean);
+    } else if (typeof fields === 'string' && fields.trim()) {
+      params.fields = fields.split(',').map(s => s.trim()).filter(Boolean);
     }
 
     const resp = await axios.get(getRecordsEndpoint(), {
@@ -68,23 +112,13 @@ app.get('/api/record', async (req, res) => {
   }
 });
 
-
-// 詳細API：行クリック時に $id で1件取得
-app.get('/api/record', async (req, res) => {
-  const { id } = req.query;
-  if (!id) return res.status(400).json({ ok:false, error:'id is required' });
-  try {
-    const params = { app: APP_ID, query: `$id = ${Number(id)} limit 1` };
-    const resp = await axios.get(getRecordsEndpoint(), {
-      headers: { 'X-Cybozu-API-Token': TOKEN },
-      params
-    });
-    const rec = (resp.data.records || [])[0];
-    res.json({ ok:true, record: rec || null });
-  } catch (err) {
-    res.status(err.response?.status || 500).json({ ok:false, error: err.response?.data || err.message });
-  }
+// 未定義の /api/* は JSON 404 を返す（HTMLを返さない）
+app.use('/api', (req, res) => {
+  res.status(404).json({ ok: false, error: 'Not Found' });
 });
+
+// --- 最後に静的配信 ---
+app.use(express.static(path.join(__dirname, 'public')));
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running: http://localhost:${port}`));
