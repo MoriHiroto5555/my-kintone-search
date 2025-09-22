@@ -41,42 +41,33 @@ function getRecordsEndpoint() {
 }
 
 // 検索API：商品コード/商品名/上代（3列＋$idを返す）
-app.get('/api/search', async (req, res) => {
+app.get('/api/record', async (req, res) => {
+  const { id, fields } = req.query;
+  if (!id) return res.status(400).json({ ok:false, error:'id is required' });
+
   try {
-    const { keyword = '', limit = 50, offset = 0, order = '更新日時 desc' } = req.query;
+    const params = { app: APP_ID, query: `$id = ${Number(id)} limit 1` };
 
-    const maybeNumber = Number(keyword);
-    const priceCond = Number.isFinite(maybeNumber) ? `${FIELDS.PRICE} = ${maybeNumber}` : '';
-
-    const q = keyword
-      ? [ `${FIELDS.CODE} like "${keyword}"`,
-          `${FIELDS.NAME} like "${keyword}"`,
-          priceCond
-        ].filter(Boolean).join(' or ')
-      : '';
-
-    const params = {
-      app: APP_ID,
-      query: [q, `order by ${order}`, `limit ${Number(limit)}`, `offset ${Number(offset)}`]
-              .filter(Boolean).join(' '),
-     fields: ['$id', 'レコード番号',FIELDS.CODE, FIELDS.NAME, FIELDS.PRICE,'記号', '内箱入数', 'ロケーション', '差引実']
-    };
+    // クエリに fields=A,B,C が来たら kintone にもそのまま転送
+    if (fields) {
+      params.fields = String(fields)
+        .split(',')
+        .map(decodeURIComponent)
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
 
     const resp = await axios.get(getRecordsEndpoint(), {
       headers: { 'X-Cybozu-API-Token': TOKEN },
       params,
     });
-
-    res.json({
-      ok: true,
-      totalCount: resp.data.totalCount ?? undefined,
-      records: resp.data.records || [],
-      nextOffset: Number(offset) + Number(limit)
-    });
+    const rec = (resp.data.records || [])[0];
+    res.json({ ok:true, record: rec || null });
   } catch (err) {
-    res.status(err.response?.status || 500).json({ ok: false, error: err.response?.data || err.message });
+    res.status(err.response?.status || 500).json({ ok:false, error: err.response?.data || err.message });
   }
 });
+
 
 // 詳細API：行クリック時に $id で1件取得
 app.get('/api/record', async (req, res) => {
