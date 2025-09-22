@@ -101,25 +101,62 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// 詳細モーダルに表示するフィールドコード（この順で表示）
+const DETAIL_FIELDS = [
+  '商品CD','商品名','上代','特別上代','記号','裸差引','詰差引','定番差引','差引実',
+  '頁CD','行CD','ロケーション','荷姿','CT入数','内箱入数','JAN','主倉庫CD',
+  '仕入先名','原産地','磁器陶器','材質_Bshop','材質備考_Bshop','容量_Bshop',
+  '商品重量_Bshop','発注残','受注残合計'
+];
+
+// （任意）表示ラベルを変えたいときだけ指定。未指定はコード名をそのままラベルにします。
+const DETAIL_LABELS = {
+  // 例: '商品CD': '商品コード'
+};
+
+// フィールド別フォーマッタ
+const yenFmt = new Intl.NumberFormat('ja-JP');
+const numFmt = new Intl.NumberFormat('ja-JP');
+const CURRENCY_FIELDS = new Set(['上代','特別上代']);
+const NUMBER_FIELDS   = new Set(['裸差引','詰差引','定番差引','差引実','CT入数','内箱入数','商品重量_Bshop','発注残','受注残合計']);
+// ※ JAN は先頭ゼロ保持のため数値化しません
+
+function formatByField(code, raw) {
+  if (raw === '' || raw === null || raw === undefined) return '';
+  if (CURRENCY_FIELDS.has(code) && !isNaN(raw)) return `¥${yenFmt.format(Number(raw))}`;
+  if (NUMBER_FIELDS.has(code)   && !isNaN(raw)) return numFmt.format(Number(String(raw).replace(/,/g,'')));
+  return String(raw);
+}
+
+// 空欄の行は非表示にする（表示したいなら true）
+const SHOW_EMPTY = false;
+
+
 form.addEventListener('submit', (e) => { e.preventDefault(); search(); });
 
 async function openDetail(record) {
-  const rid = record?.$id?.value || record?.['レコード番号']?.value; // 詳細取得用ID
+  const rid = record?.$id?.value || record?.['レコード番号']?.value;
   let detail = record;
+
   try {
     if (rid) {
-      const resp = await fetch(`/api/record?id=${encodeURIComponent(rid)}`);
+      // サーバへ「必要なフィールドだけ」要求
+      const fieldsParam = encodeURIComponent(DETAIL_FIELDS.join(','));
+      const resp = await fetch(`/api/record?id=${encodeURIComponent(rid)}&fields=${fieldsParam}`);
       const data = await resp.json();
       if (data?.ok && data.record) detail = data.record;
     }
   } catch (_) {}
 
-  const rows = Object.entries(detail || {})
-    .map(([key, val]) => {
-      const v = typeof val === 'object' && val && 'value' in val ? val.value : JSON.stringify(val);
-      return `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(v ?? '')}</td></tr>`;
-    })
-    .join('');
+  // 指定順でだけレンダリング
+  const rows = DETAIL_FIELDS.map((code) => {
+    const cell = detail?.[code];
+    const raw  = (cell && typeof cell === 'object' && 'value' in cell) ? cell.value : '';
+    if (!SHOW_EMPTY && (raw === '' || raw === null || raw === undefined)) return '';
+    const label = DETAIL_LABELS[code] || code;
+    const val   = formatByField(code, raw);
+    return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
+  }).filter(Boolean).join('');
 
   detailBody.innerHTML = rows || '<tr><td colspan="2">詳細データがありません</td></tr>';
   if (detailDialog?.showModal) detailDialog.showModal();
