@@ -137,6 +137,7 @@ function renderCards(records) {
     return;
   }
   for (const r of records) {
+    const itemCd  = r[FIELDS.ITEM_CD]?.value ?? '';
     const code     = r[FIELDS.CODE]?.value ?? '';
     const name     = r[FIELDS.NAME]?.value ?? '';
     const priceRaw = r[FIELDS.PRICE]?.value ?? '';
