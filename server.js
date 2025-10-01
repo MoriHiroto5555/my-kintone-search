@@ -11,10 +11,10 @@ const app = express();
 app.use(express.json());
 
 // ==== 環境変数 ====
-const BASE   = (process.env.KINTONE_BASE_URL || '').trim();   // 例: https://xxx.cybozu.com
-const APP_ID = (process.env.KINTONE_APP_ID   || '').trim();   // 数値 or 文字列
-const TOKEN  = (process.env.KINTONE_API_TOKEN|| '').trim();   // APIトークン
-const GUEST  = (process.env.KINTONE_GUEST_SPACE_ID || '').trim(); // 任意
+const BASE   = (process.env.KINTONE_BASE_URL || '').trim();          // 例: https://xxx.cybozu.com
+const APP_ID = (process.env.KINTONE_APP_ID || '').trim();            // 数値 or 文字列
+const TOKEN  = (process.env.KINTONE_API_TOKEN || '').trim();         // APIトークン
+const GUEST  = (process.env.KINTONE_GUEST_SPACE_ID || '').trim();    // 任意
 
 console.log('[ENV CHECK]', { BASE: !!BASE, APP_ID: !!APP_ID, TOKEN: !!TOKEN });
 if (!BASE || !APP_ID || !TOKEN) {
@@ -36,11 +36,56 @@ function getRecordsEndpoint() {
     : `${BASE}/k/v1/records.json`;
 }
 
-// 動作確認用
+// --- Dropbox画像プロキシ（モバイルでも安定表示させる）---
+function normalizeDropboxForFetch(href) {
+  try {
+    const u = new URL(String(href).trim());
+    const host = u.hostname.toLowerCase();
+    // Dropbox 以外は拒否（SSRF対策）
+    if (host.endsWith('dropbox.com') || host.endsWith('dropboxusercontent.com')) {
+      u.hostname = 'dl.dropboxusercontent.com';
+      u.searchParams.delete('dl');
+      u.searchParams.set('raw', '1'); // インライン表示
+      return u.toString();
+    }
+  } catch (_) {}
+  return null;
+}
+
+app.get('/img', async (req, res) => {
+  const href = req.query.url;
+  if (!href) return res.status(400).send('url required');
+
+  const finalUrl = normalizeDropboxForFetch(href);
+  if (!finalUrl) return res.status(400).send('unsupported host');
+
+  try {
+    const upstream = await axios.get(finalUrl, {
+      responseType: 'stream',
+      timeout: 15000,
+      headers: {
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        'User-Agent': 'kintone-image-proxy/1.0'
+      }
+    });
+
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Content-Type', upstream.headers['content-type'] || 'image/jpeg');
+    if (upstream.headers['content-length']) {
+      res.setHeader('Content-Length', upstream.headers['content-length']);
+    }
+
+    upstream.data.pipe(res);
+  } catch (err) {
+    res.status(err.response?.status || 502).send('image fetch failed');
+  }
+});
+
+// ===== API: 動作確認 =====
 app.get('/api/ping', (req, res) => res.json({ ok: true }));
 
-// ===== /api/search（復活）=====
-// 商品コード/商品名/上代 に加えて、カードに出す 7 項目を返す
+// ===== API: 検索（カード用）=====
 app.get('/api/search', async (req, res) => {
   try {
     const { keyword = '', limit = 50, offset = 0, order = '更新日時 desc' } = req.query;
@@ -59,9 +104,7 @@ app.get('/api/search', async (req, res) => {
     const params = {
       app: APP_ID,
       query: [q, `order by ${order}`, `limit ${Number(limit)}`, `offset ${Number(offset)}`]
-        .filter(Boolean)
-        .join(' '),
-      // カードで使う7項目＋ID系
+        .filter(Boolean).join(' '),
       fields: [
         '$id', 'レコード番号',
         FIELDS.CODE, FIELDS.NAME, FIELDS.PRICE,
@@ -85,7 +128,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// ===== /api/record（重複を解消・fields対応）=====
+// ===== API: 詳細（指定フィールドだけ取得可能）=====
 app.get('/api/record', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ ok:false, error:'id is required' });
@@ -93,7 +136,7 @@ app.get('/api/record', async (req, res) => {
   try {
     const params = { app: APP_ID, query: `$id = ${Number(id)} limit 1` };
 
-    // fields は "A,B" でも fields=A&fields=B... でもOKに
+    // fields は "A,B" でも fields=A&fields=B... でもOK
     let fields = req.query.fields;
     if (Array.isArray(fields)) {
       params.fields = fields.map(s => String(s).trim()).filter(Boolean);
@@ -112,7 +155,7 @@ app.get('/api/record', async (req, res) => {
   }
 });
 
-// 未定義の /api/* は JSON 404 を返す（HTMLを返さない）
+// 未定義の /api/* は JSON 404
 app.use('/api', (req, res) => {
   res.status(404).json({ ok: false, error: 'Not Found' });
 });
