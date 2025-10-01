@@ -9,15 +9,15 @@ const FIELDS = {
   BALANCE: '差引実',
 };
 
-// ▼ 画像URLが入っているフィールドコード（文字列1行）。例では「DropBox」
-//   ※「フィールド名」ではなく「フィールドコード」です。コードが違う場合はここを修正してください。
+// ▼ 画像URLが入っているフィールドコード（文字列1行）
+//   フィールド“名”ではなく“フィールドコード”を指定してください。
 const IMAGE_FIELDS = ['DropBox'];
 
-// 詳細モーダルに表示するフィールドコード（この順で表示：ご要望のリスト）
+// 詳細モーダルに表示するフィールドコード（この順で表示）
 const DETAIL_FIELDS = [
   '商品CD','商品名','上代','特別上代','記号','裸差引','詰差引','定番差引','差引実',
   '頁CD','行CD','ロケーション','荷姿','CT入数','内箱入数','JAN','主倉庫CD',
-  '仕入先名','原産地','磁器陶器','材質備考_Bshop','容量_Bshop',
+  '仕入先名','原産地','磁器陶器','材質_Bshop','材質備考_Bshop','容量_Bshop',
   '商品重量_Bshop','発注残','受注残合計'
 ];
 
@@ -42,7 +42,7 @@ function formatByField(code, raw) {
 // 空欄の行は非表示（表示したいなら true）
 const SHOW_EMPTY = false;
 
-// ---- ここから既存UIロジック ----
+// ---- 既存UIロジック ----
 const form = document.getElementById('searchForm');
 const keywordInput = document.getElementById('keyword');
 const cards = document.getElementById('cards');
@@ -135,14 +135,15 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-// ---- Dropbox画像対応（ヘルパ）----
+// ---- Dropbox画像対応（ダウンロードさせない版：raw=1 を使用）----
 function normalizeDropboxUrl(u) {
   try {
     const url = new URL(String(u).trim());
     if (url.hostname.endsWith('dropbox.com')) {
-      if (url.hostname === 'www.dropbox.com') url.hostname = 'dl.dropboxusercontent.com';
-      if (url.searchParams.has('dl')) url.searchParams.set('dl', '1');
-      else url.searchParams.set('raw', '1');
+      // 画像表示用に dl.dropboxusercontent.com を使用し、強制DL(dl)は消して raw=1 でインライン表示
+      url.hostname = 'dl.dropboxusercontent.com';
+      url.searchParams.delete('dl');
+      url.searchParams.set('raw', '1');
       return url.toString();
     }
     return url.toString();
@@ -194,7 +195,7 @@ async function openDetail(record) {
     }
   } catch (_) {}
 
-  // 画像URLを抽出（Dropbox共有リンクは直リンク化）
+  // 画像URLを抽出（Dropbox共有リンクは直リンク化：raw=1）
   const imageUrls = findImageUrlsFromRecord(detail);
 
   // 指定順でテーブル行を作成
@@ -207,7 +208,7 @@ async function openDetail(record) {
     return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
   }).filter(Boolean).join('');
 
-  // 画像があれば最上段に1行差し込む
+  // 画像があれば最上段に1行差し込む（表示は直リンク、クリックも同じ直リンク）
   const imagesRow = imageUrls.length
     ? `<tr class="detail-images-row">
          <td colspan="2">
