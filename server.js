@@ -1,3 +1,4 @@
+// server.js
 import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
@@ -22,7 +23,7 @@ if (!BASE || !APP_ID || !TOKEN) {
   process.exit(1);
 }
 
-// 検索カードで使うフィールドコード（.envで上書き可）
+// 検索カードで使うフィールドコード（必要なら .env で上書き）
 const FIELDS = {
   CODE:  process.env.FIELD_CODE_CODE  || '商品コード',
   NAME:  process.env.FIELD_CODE_NAME  || '商品名',
@@ -36,7 +37,7 @@ function getRecordsEndpoint() {
     : `${BASE}/k/v1/records.json`;
 }
 
-// --- Dropbox画像プロキシ（モバイルでも安定表示させる）---
+// --- Dropbox画像プロキシ（iOSでも確実に表示させる：MIME を明示） ---
 function normalizeDropboxForFetch(href) {
   try {
     const u = new URL(String(href).trim());
@@ -44,12 +45,26 @@ function normalizeDropboxForFetch(href) {
     // Dropbox 以外は拒否（SSRF対策）
     if (host.endsWith('dropbox.com') || host.endsWith('dropboxusercontent.com')) {
       u.hostname = 'dl.dropboxusercontent.com';
-      u.searchParams.delete('dl');
-      u.searchParams.set('raw', '1'); // インライン表示
+      u.searchParams.delete('dl');           // dl=1 はダウンロードになることがある
+      u.searchParams.set('raw', '1');        // インライン表示
       return u.toString();
     }
   } catch (_) {}
   return null;
+}
+
+function guessMimeFromExt(href) {
+  try {
+    const pathname = new URL(String(href)).pathname.toLowerCase();
+    const ext = pathname.split('.').pop() || '';
+    const map = {
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg',
+      png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+      bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif',
+      heic: 'image/heic'
+    };
+    return map[ext] || null;
+  } catch { return null; }
 }
 
 app.get('/img', async (req, res) => {
@@ -60,8 +75,9 @@ app.get('/img', async (req, res) => {
   if (!finalUrl) return res.status(400).send('unsupported host');
 
   try {
+    // arraybuffer で受け取り、Content-Type をこちらで決める
     const upstream = await axios.get(finalUrl, {
-      responseType: 'stream',
+      responseType: 'arraybuffer',
       timeout: 15000,
       headers: {
         'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
@@ -69,14 +85,17 @@ app.get('/img', async (req, res) => {
       }
     });
 
-    res.setHeader('Content-Disposition', 'inline');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.setHeader('Content-Type', upstream.headers['content-type'] || 'image/jpeg');
-    if (upstream.headers['content-length']) {
-      res.setHeader('Content-Length', upstream.headers['content-length']);
-    }
+    // MIME の明示（Dropbox が octet-stream を返すことがある）
+    let ctype = upstream.headers['content-type'];
+    const guessed = guessMimeFromExt(href);
+    if (!ctype || /octet-stream/i.test(ctype)) ctype = guessed || 'image/jpeg';
 
-    upstream.data.pipe(res);
+    res.setHeader('Content-Type', ctype);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const filename = encodeURIComponent(new URL(href).pathname.split('/').pop() || 'image');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${filename}`);
+
+    res.end(Buffer.from(upstream.data));
   } catch (err) {
     res.status(err.response?.status || 502).send('image fetch failed');
   }
@@ -155,7 +174,7 @@ app.get('/api/record', async (req, res) => {
   }
 });
 
-// 未定義の /api/* は JSON 404
+// 未定義の /api/* は JSON 404（HTML を返さない）
 app.use('/api', (req, res) => {
   res.status(404).json({ ok: false, error: 'Not Found' });
 });
