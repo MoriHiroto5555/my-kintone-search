@@ -7,6 +7,7 @@ const FIELDS = {
   INNER_QTY: '内箱入数',
   LOCATION: 'ロケーション',
   BALANCE: '差引実',
+  ITEM_CD: '商品CD',
 };
 
 // ▼ 画像URLが入っているフィールドコード（文字列1行：例「DropBox」）
@@ -159,6 +160,7 @@ function renderCards(records) {
       </div>
       <div class="card-title">${escapeHtml(name)}</div>
       <div class="card-kvs">
+        <div class="k">商品CD</div><div class="v">${escapeHtml(itemCd)}</div>
         <div class="k">記号</div><div class="v">${escapeHtml(symbol)}</div>
         <div class="k">内箱入数</div><div class="v">${escapeHtml(formatNum(innerQty))}</div>
         <div class="k">ロケーション</div><div class="v">${escapeHtml(location)}</div>
