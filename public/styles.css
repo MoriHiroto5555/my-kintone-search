@@ -52,6 +52,7 @@ dialog::backdrop{background:rgba(0,0,0,.35);}
   background: #fff;
   border: 1px solid #eee;
   border-radius: 8px;
+  cursor: pointer;
 }
 .detail-images-row td { padding-top: 12px; }
 
