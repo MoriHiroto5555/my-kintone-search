@@ -101,4 +101,144 @@ function toDropboxPreviewUrl(u) {
     if (url.hostname.endsWith('dropboxusercontent.com')) {
       url.hostname = 'www.dropbox.com';
     }
-    if (url.hostname
+    if (url.hostname.endsWith('dropbox.com')) {
+      url.searchParams.delete('raw');        // raw は不要
+      if (url.searchParams.has('dl')) url.searchParams.set('dl', '0'); // プレビューに
+    }
+    return url.toString();
+  } catch {
+    return String(u || '');
+  }
+}
+
+// ---- 検索 ----
+async function search() {
+  const keyword = keywordInput.value.trim();
+  const params = new URLSearchParams({ keyword, limit, offset: 0 });
+  setBusy(true);
+  try {
+    const resp = await fetch(`/api/search?${params.toString()}`);
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error?.message || JSON.stringify(data.error));
+    renderCards(data.records || []);
+  } catch (e) {
+    alert('検索に失敗しました\n' + e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ---- カード描画 ----
+function renderCards(records) {
+  cards.innerHTML = '';
+  if (!records.length) {
+    cards.innerHTML = '<p style="grid-column:1/-1; color:#64748b;">該当データがありません</p>';
+    return;
+  }
+  for (const r of records) {
+    const code     = r[FIELDS.CODE]?.value ?? '';
+    const name     = r[FIELDS.NAME]?.value ?? '';
+    const priceRaw = r[FIELDS.PRICE]?.value ?? '';
+    const symbol   = r[FIELDS.SYMBOL]?.value ?? '';
+    const innerQty = r[FIELDS.INNER_QTY]?.value ?? '';
+    const location = r[FIELDS.LOCATION]?.value ?? '';
+    const balance  = r[FIELDS.BALANCE]?.value ?? '';
+
+    const price = priceRaw !== '' && !isNaN(priceRaw) ? `¥${yen.format(Number(priceRaw))}` : priceRaw;
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.tabIndex = 0;
+    card.role = 'button';
+    card.setAttribute('aria-label', `詳細を表示: ${name || code || '商品'}`);
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="code">${escapeHtml(code)}</div>
+        <div class="price">${escapeHtml(price)}</div>
+      </div>
+      <div class="card-title">${escapeHtml(name)}</div>
+      <div class="card-kvs">
+        <div class="k">記号</div><div class="v">${escapeHtml(symbol)}</div>
+        <div class="k">内箱入数</div><div class="v">${escapeHtml(formatNum(innerQty))}</div>
+        <div class="k">ロケーション</div><div class="v">${escapeHtml(location)}</div>
+        <div class="k">差引実</div><div class="v">${escapeHtml(formatNum(balance))}</div>
+      </div>
+      <div class="card-meta">クリックまたはEnterで詳細</div>
+    `;
+
+    card.addEventListener('click', () => openDetail(r));
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openDetail(r); }
+    });
+
+    cards.appendChild(card);
+  }
+}
+
+// ---- 詳細モーダル ----
+form.addEventListener('submit', (e) => { e.preventDefault(); search(); });
+
+async function openDetail(record) {
+  const rid = record?.$id?.value || record?.['レコード番号']?.value;
+  let detail = record;
+
+  try {
+    if (rid) {
+      // 詳細 + 画像フィールドだけ取得
+      const fieldsToRequest = uniq([...(DETAIL_FIELDS || []), ...IMAGE_FIELDS]);
+      const p = new URLSearchParams();
+      p.set('id', rid);
+      fieldsToRequest.forEach(f => p.append('fields', f)); // fields=A&fields=B...
+      const resp = await fetch(`/api/record?${p.toString()}`);
+      const data = await resp.json();
+      if (data?.ok && data.record) detail = data.record;
+    }
+  } catch (_) {}
+
+  // 共有URLを抽出
+  const imageUrls = findImageUrlsFromRecord(detail);
+
+  // 詳細テーブル
+  const rowsHtml = (DETAIL_FIELDS || []).map((code) => {
+    const cell = detail?.[code];
+    const raw  = (cell && typeof cell === 'object' && 'value' in cell) ? cell.value : '';
+    if (!SHOW_EMPTY && (raw === '' || raw === null || raw === undefined)) return '';
+    const label = (DETAIL_LABELS && DETAIL_LABELS[code]) || code;
+    const val   = formatByField(code, raw);
+    return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
+  }).filter(Boolean).join('');
+
+  // 画像があれば最上段に1行差し込む
+  // 表示は /img?url=...（同一オリジン・安定表示）
+  // クリック先は Dropbox プレビュー（www.dropbox.com）に変換して遷移
+  const imagesRow = imageUrls.length
+    ? `<tr class="detail-images-row">
+         <td colspan="2">
+           <div class="detail-images">
+             ${imageUrls.map(href => {
+               const proxied = '/img?url=' + encodeURIComponent(href);
+               const preview = toDropboxPreviewUrl(href);
+               return `<a href="${escapeHtml(preview)}" target="_blank" rel="noopener noreferrer">
+                         <img
+                           src="${escapeHtml(proxied)}"
+                           alt="product image"
+                           loading="lazy"
+                           referrerpolicy="no-referrer"
+                           onerror="this.style.display='none'"
+                         />
+                       </a>`;
+             }).join('')}
+           </div>
+         </td>
+       </tr>`
+    : '';
+
+  detailBody.innerHTML = (imagesRow + rowsHtml) || '<tr><td colspan="2">詳細データがありません</td></tr>';
+  if (detailDialog?.showModal) detailDialog.showModal();
+}
+
+detailClose?.addEventListener('click', () => detailDialog?.close && detailDialog.close());
+
+// 初期表示
+search();
