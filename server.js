@@ -127,7 +127,7 @@ app.get('/api/search', async (req, res) => {
       fields: [
         '$id', 'レコード番号',
         FIELDS.CODE, FIELDS.NAME, FIELDS.PRICE,
-        '記号', '内箱入数', 'ロケーション', '差引実'
+        '記号', '内箱入数', 'ロケーション', '差引実', '商品CD'
       ],
     };
 
