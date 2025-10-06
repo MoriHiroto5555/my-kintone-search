@@ -109,14 +109,11 @@ app.get('/api/search', async (req, res) => {
   try {
     const { keyword = '', limit = 50, offset = 0, order = '更新日時 desc' } = req.query;
 
-    const maybeNumber = Number(keyword);
-    const priceCond = Number.isFinite(maybeNumber) ? `${FIELDS.PRICE} = ${maybeNumber}` : '';
-
     const q = keyword
       ? [
           `${FIELDS.CODE} like "${keyword}"`,
-          `${FIELDS.NAME} like "${keyword}"`,
-          priceCond
+          `${FIELDS.NAME} like "${keyword}"`
+
         ].filter(Boolean).join(' or ')
       : '';
 
